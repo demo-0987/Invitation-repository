@@ -1,44 +1,49 @@
-name: Create Issue on Collaborator Added or Push
+name: Create Issue When User Accepts Org Invitation
 
 on:
-  member:
-    types: [added]
   push:
     branches:
       - main
+  member:
+    types: [added]
 
 jobs:
   create-issue:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Check if the user is collaborator
+      - name: Check if the user is part of the organization
         id: check_user
         run: |
-          echo "Checking if the user is collaborator..."
-          USERNAME=${{ github.event.member.login || '' }}
+          echo "Checking if the user is part of the organization..."
+          USERNAME="${{ github.event.member.login }}"
+          ORG="demo-0987"   # Replace with your organization name
+          
+          # Use GitHub API to check if user is part of the organization
+          ORG_MEMBER=$(curl -s -H "Authorization: token ${{ secrets.TOKEN }}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/orgs/${ORG}/members/${USERNAME}")
+          
+          if echo "$ORG_MEMBER" | grep -q "Not Found"; then
+            echo "User is not a member of the organization yet. Exiting..."
+            exit 0
+          else
+            echo "User is a member of the organization."
+          fi
+
+      - name: Create an Issue in the Invitation repository
+        if: success()
+        run: |
+          USERNAME="${{ github.event.member.login }}"
           ORG="demo-0987"
           REPO="Invitation-repository"
+          TITLE="New User Joined: $USERNAME"
+          BODY="The user @$USERNAME has accepted the invitation to join the organization and is now a member of the repository."
 
-          # If USERNAME is empty (e.g. on push), skip
-          if [ -z "$USERNAME" ]; then
-            echo "No user to check (probably triggered by push)."
-            echo "user_is_collaborator=false" >> $GITHUB_OUTPUT
-            exit 0
-          fi
-
-          RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" \
+          curl -X POST \
             -H "Authorization: token ${{ secrets.TOKEN }}" \
-            "https://api.github.com/repos/${ORG}/${REPO}/collaborators/${USERNAME}")
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/${ORG}/${REPO}/issues \
+            -d "$(jq -n --arg title "$TITLE" --arg body "$BODY" '{title: $title, body: $body}')"
 
-          if [ "$RESPONSE" = "204" ]; then
-            echo "User $USERNAME is a collaborator."
-            echo "user_is_collaborator=true" >> $GITHUB_OUTPUT
-          else
-            echo "User $USERNAME is NOT a collaborator."
-            echo "user_is_collaborator=false" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Create Issue for New Collaborator
-        if: steps.check_user.outputs.u_
-
+            
