@@ -1,59 +1,44 @@
-name: Create Issues for New Org Members
+name: Create Issue on Collaborator Added or Push
 
 on:
-  schedule:
-    - cron: '*/10 * * * *'  # every 10 minutes
+  member:
+    types: [added]
+  push:
+    branches:
+      - main
 
 jobs:
-  create-issues:
+  create-issue:
     runs-on: ubuntu-latest
+
     steps:
-      - name: Checkout repo
-        uses: actions/checkout@v3
-
-      - name: Get current org members
+      - name: Check if the user is collaborator
+        id: check_user
         run: |
-          curl -s -H "Authorization: token ${{ secrets.GH_PAT }}" \
-            -H "Accept: application/vnd.github+json" \
-            https://api.github.com/orgs/demo-0987/members > members.json
+          echo "Checking if the user is collaborator..."
+          USERNAME=${{ github.event.member.login || '' }}
+          ORG="demo-0987"
+          REPO="Invitation-repository"
 
-      - name: Prepare previous members list
-        run: |
-          if [ ! -f previous_members.txt ]; then
-            touch previous_members.txt
+          # If USERNAME is empty (e.g. on push), skip
+          if [ -z "$USERNAME" ]; then
+            echo "No user to check (probably triggered by push)."
+            echo "user_is_collaborator=false" >> $GITHUB_OUTPUT
+            exit 0
           fi
 
-      - name: Detect new members and create issues
-        run: |
-          current=$(jq -r '.[].login' members.json | sort)
-          previous=$(cat previous_members.txt | sort)
+          RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" \
+            -H "Authorization: token ${{ secrets.TOKEN }}" \
+            "https://api.github.com/repos/${ORG}/${REPO}/collaborators/${USERNAME}")
 
-          new_members=$(comm -13 <(echo "$previous") <(echo "$current"))
+          if [ "$RESPONSE" = "204" ]; then
+            echo "User $USERNAME is a collaborator."
+            echo "user_is_collaborator=true" >> $GITHUB_OUTPUT
+          else
+            echo "User $USERNAME is NOT a collaborator."
+            echo "user_is_collaborator=false" >> $GITHUB_OUTPUT
+          fi
 
-          echo "New members detected:"
-          echo "$new_members"
+      - name: Create Issue for New Collaborator
+        if: steps.check_user.outputs.u_
 
-          for user in $new_members; do
-            echo "Creating issue for $user"
-            payload=$(jq -n --arg user "$user" --arg org "demo-0987" '{
-              title: ("Welcome " + $user + " to " + $org),
-              body: ("User @" + $user + " has accepted the invitation to the organization.")
-            }')
-
-            curl -X POST \
-              -H "Authorization: token ${{ secrets.GH_PAT }}" \
-              -H "Accept: application/vnd.github+json" \
-              https://api.github.com/repos/demo-0987/Invitation-repository/issues \
-              -d "$payload"
-          done
-
-          echo "$current" > previous_members.txt
-
-      - name: Commit updated members list
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add previous_members.txt
-          git commit -m "Update members list"
-          git push
-        continue-on-error: true
