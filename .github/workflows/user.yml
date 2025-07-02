@@ -1,0 +1,48 @@
+name: Create Issue on Org Invitation Acceptance
+
+on:
+  member:
+    types: [added]
+
+jobs:
+  create_issue:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Set variables
+        id: vars
+        run: |
+          echo "USERNAME=${{ github.event.member.login }}" >> $GITHUB_ENV
+          echo "ORG=demo-0987" >> $GITHUB_ENV
+          echo "REPO=Invitation-repository" >> $GITHUB_ENV
+
+      - name: Debug info
+        run: |
+          echo "GitHub Event:"
+          echo "${{ toJson(github) }}"
+          echo "Event Member Login: $USERNAME"
+          echo "Org: $ORG"
+          echo "Repo: $REPO"
+
+      - name: Create an issue welcoming the new member
+        run: |
+          TITLE="Welcome $USERNAME to $ORG!"
+          BODY="User @$USERNAME has accepted the invitation to join the organization **$ORG** and is now a member."
+
+          echo "Creating issue with title: $TITLE"
+
+          RESPONSE=$(curl -s -w "%{http_code}" -o response.json -X POST \
+            -H "Authorization: token ${{ secrets.TOKEN }}" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/$ORG/$REPO/issues \
+            -d "$(jq -n --arg title "$TITLE" --arg body "$BODY" '{title: $title, body: $body}')")
+
+          echo "Response status code: $RESPONSE"
+          cat response.json
+
+          if [ "$RESPONSE" != "201" ]; then
+            echo "Failed to create issue."
+            exit 1
+          else
+            echo "Issue created successfully!"
+          fi
