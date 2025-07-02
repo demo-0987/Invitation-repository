@@ -1,67 +1,59 @@
-name: Invite User and Create Issue on Acceptance
+name: Create Issues for New Org Members
 
 on:
-  workflow_dispatch:
-    inputs:
-      username:
-        description: 'GitHub username to invite'
-        required: true
-      issue_title:
-        description: 'Issue summary/title'
-        required: true
-      issue_body:
-        description: 'Issue description/body'
-        required: true
+  schedule:
+    - cron: '*/10 * * * *'  # every 10 minutes
 
 jobs:
-  invite-and-create-issue:
+  create-issues:
     runs-on: ubuntu-latest
     steps:
-      - name: Invite user to demo-0987 organization
+      - name: Checkout repo
+        uses: actions/checkout@v3
+
+      - name: Get current org members
         run: |
-          echo "Inviting user ${{ github.event.inputs.username }} to org demo-0987..."
-          curl -X PUT \
-            -H "Authorization: token ${{ secrets.GH_PAT }}" \
+          curl -s -H "Authorization: token ${{ secrets.GH_PAT }}" \
             -H "Accept: application/vnd.github+json" \
-            https://api.github.com/orgs/demo-0987/memberships/${{ github.event.inputs.username }} \
-            -d '{"role":"direct_member"}'
+            https://api.github.com/orgs/demo-0987/members > members.json
 
-      - name: Wait for user to accept invitation (up to 30 minutes)
+      - name: Prepare previous members list
         run: |
-          echo "Waiting for ${{ github.event.inputs.username }} to accept the invitation..."
-          accepted="false"
-          for i in {1..60}; do
-            sleep 30
-            response=$(curl -s \
-              -H "Authorization: token ${{ secrets.GH_PAT }}" \
-              -H "Accept: application/vnd.github+json" \
-              https://api.github.com/orgs/demo-0987/members)
-
-            echo "$response" | grep -q "\"login\": \"${{ github.event.inputs.username }}\""
-            if [ $? -eq 0 ]; then
-              echo "User has accepted the invitation"
-              accepted="true"
-              break
-            else
-              echo "Still waiting..."
-            fi
-          done
-
-          if [ "$accepted" != "true" ]; then
-            echo "User did not accept the invitation within 30 minutes"
-            exit 1
+          if [ ! -f previous_members.txt ]; then
+            touch previous_members.txt
           fi
 
-      - name: Create issue in demo-0987/Invitation-repository
+      - name: Detect new members and create issues
         run: |
-          echo "Creating issue in Invitation-repository..."
-          curl -X POST \
-            -H "Authorization: token ${{ secrets.GH_PAT }}" \
-            -H "Accept: application/vnd.github+json" \
-            https://api.github.com/repos/demo-0987/Invitation-repository/issues \
-            -d @- <<EOF
-          {
-            "title": "${{ github.event.inputs.issue_title }}",
-            "body": "${{ github.event.inputs.issue_body }}"
-          }
-          EOF
+          current=$(jq -r '.[].login' members.json | sort)
+          previous=$(cat previous_members.txt | sort)
+
+          new_members=$(comm -13 <(echo "$previous") <(echo "$current"))
+
+          echo "New members detected:"
+          echo "$new_members"
+
+          for user in $new_members; do
+            echo "Creating issue for $user"
+            payload=$(jq -n --arg user "$user" --arg org "demo-0987" '{
+              title: ("Welcome " + $user + " to " + $org),
+              body: ("User @" + $user + " has accepted the invitation to the organization.")
+            }')
+
+            curl -X POST \
+              -H "Authorization: token ${{ secrets.GH_PAT }}" \
+              -H "Accept: application/vnd.github+json" \
+              https://api.github.com/repos/demo-0987/Invitation-repository/issues \
+              -d "$payload"
+          done
+
+          echo "$current" > previous_members.txt
+
+      - name: Commit updated members list
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add previous_members.txt
+          git commit -m "Update members list"
+          git push
+        continue-on-error: true
