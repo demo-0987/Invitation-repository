@@ -1,0 +1,22 @@
+name: Create Issues for New Org Members
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'  # every 10 minutes
+
+jobs:
+  create-issues:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Get current org members
+        run: |
+          curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/orgs/demo-0987/members > members.json
+
+      - name: Detect new members and create issues
+        run: |
+          # Assume you maintain a file previous_members.txt to track users
+          # Add logic here to compare and create issues accordingly
+          echo "Implement comparison and issue creation logic"
